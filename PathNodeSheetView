@@ -1,0 +1,125 @@
+import SwiftUI
+
+struct PathNodeSheetView: View {
+    let section: PathSection
+    let state: PathNodeState
+    let accentColor: Color
+    let isPro: Bool
+    let onAction: () -> Void
+    let onDismiss: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(spacing: dynamicTypeSize.isAccessibilitySize ? 20 : 16) {
+            Text(section.title)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(PhloeTheme.Colors.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+
+            metadataLine
+
+            actionButton
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.white)
+                .shadow(color: .black.opacity(0.08), radius: 12, y: -2)
+                .shadow(color: .black.opacity(0.04), radius: 4, y: -1)
+        )
+        .padding(.horizontal, 12)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(sheetAccessibilityLabel)
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        HStack(spacing: 6) {
+            switch state {
+            case .current:
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(accentColor.opacity(0.7))
+                Text("5 questions")
+            case .completed:
+                Image(systemName: "star.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color(hex: "F5A623"))
+                Text("Best: 4/5")
+            case .needsReview:
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(accentColor.opacity(0.7))
+                Text("Review recommended")
+            case .locked:
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(PhloeTheme.Colors.textSecondary.opacity(0.6))
+                if isPro {
+                    Text("5 questions")
+                } else {
+                    Text("Complete previous lessons")
+                }
+            }
+        }
+        .font(.system(size: 14, weight: .medium))
+        .foregroundStyle(PhloeTheme.Colors.textSecondary)
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        switch state {
+        case .current:
+            PhloeButton("START", accent: accentColor) {
+                onAction()
+            }
+            .accessibilityLabel("Start lesson")
+
+        case .completed:
+            PhloeButton("PRACTICE", accent: accentColor) {
+                onAction()
+            }
+            .accessibilityLabel("Practice this lesson")
+
+        case .needsReview:
+            PhloeButton("PRACTICE", accent: accentColor) {
+                onAction()
+            }
+            .accessibilityLabel("Review this lesson")
+
+        case .locked:
+            if isPro {
+                PhloeButton("JUMP AHEAD", accent: accentColor) {
+                    onAction()
+                }
+                .accessibilityLabel("Jump ahead to this lesson")
+            } else {
+                PhloeButton("JUMP AHEAD", variant: .disabled) {
+                    onAction()
+                }
+                .accessibilityLabel("Jump ahead, locked")
+                .accessibilityHint("Complete previous lessons to unlock")
+            }
+        }
+    }
+
+    private var sheetAccessibilityLabel: String {
+        var label = section.title
+        switch state {
+        case .current: label += ". 5 questions. Ready to start."
+        case .completed: label += ". Completed. Best score 4 of 5."
+        case .needsReview: label += ". Review recommended."
+        case .locked:
+            label += isPro ? ". Locked. You can jump ahead." : ". Locked. Complete previous lessons."
+        }
+        return label
+    }
+}
