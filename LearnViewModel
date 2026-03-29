@@ -1,0 +1,362 @@
+import SwiftUI
+
+@Observable
+@MainActor
+class LearnViewModel {
+    var currentSubject: Subject = .biology
+    var currentCoursePath: CoursePath = .standard
+    var units: [CourseMapUnit] = []
+    var showSubjectDropdown: Bool = false
+    var selectedLesson: CourseMapLesson?
+    var showLessonSheet: Bool = false
+    var subjectScore: Int = 0
+    var totalLessons: Int = 0
+    var completedLessons: Int = 0
+    var hasAnimatedPath: Bool = false
+    var activeUnitIndex: Int = 0
+    var showLockedTooltip: Bool = false
+    var lockedTooltipLessonId: String?
+    var lockedTooltipPreviousName: String = ""
+
+    var showSession: Bool = false
+    var sessionConfig: SessionConfig?
+    var isPro: Bool = false
+    var selectedLessonAccessState: LessonAccessState = .allowed
+    var streakDays: Int = 0
+
+    func loadData(
+        contentCacheService: ContentCacheService,
+        localDataService: LocalDataService,
+        srsEngine: SRSEngine,
+        dailyAccessService: DailyAccessService,
+        userId: String,
+        isPro proOverride: Bool? = nil
+    ) {
+        let subjectKey = currentSubject.rawValue
+        let courseId = currentCoursePath.courseId(for: currentSubject)
+        let courseAtoms = contentCacheService.atoms(forSubject: subjectKey, course: courseId)
+        let allContent = courseAtoms.isEmpty ? contentCacheService.atoms(forSubject: subjectKey) : courseAtoms
+        let userAtoms = localDataService.fetchUserAtoms(userId: userId).filter { $0.subject == subjectKey }
+        let userAtomMap = Dictionary(uniqueKeysWithValues: userAtoms.map { ($0.atomId, $0) })
+
+        let profile = localDataService.fetchProfile(userId: userId)
+        streakDays = profile?.currentStreak ?? 0
+
+        if let proOverride {
+            isPro = proOverride
+        } else {
+            isPro = profile?.subscriptionTier == "pro"
+        }
+
+        let grouped = Dictionary(grouping: allContent) { $0.unit }
+        let sortedUnits = grouped.sorted { lhs, rhs in
+            let lhsOrder = lhs.value.first?.unitOrder ?? 0
+            let rhsOrder = rhs.value.first?.unitOrder ?? 0
+            return lhsOrder < rhsOrder
+        }
+
+        var builtUnits: [CourseMapUnit] = []
+        var previousUnitCompleted = true
+        var foundActive = false
+
+        for (unitName, atoms) in sortedUnits {
+            let sortedAtoms = atoms.sorted { $0.atomOrder < $1.atomOrder }
+            var lessons: [CourseMapLesson] = []
+            var previousLessonUnlocked = previousUnitCompleted
+            var allLessonsCompleted = true
+            let unitCapped = dailyAccessService.isUnitCapped(unitId: unitName, isPro: isPro)
+
+            for atom in sortedAtoms {
+                let userAtom = userAtomMap[atom.id.uuidString]
+                let stage = userAtom.map { MasteryStage(rawValue: $0.stage) ?? .unseen } ?? .unseen
+
+                let lessonState: CourseMapLessonState
+                if stage.rawValue >= MasteryStage.learning.rawValue {
+                    if stage.rawValue >= MasteryStage.familiar.rawValue {
+                        lessonState = .completed
+                    } else if !foundActive {
+                        lessonState = .active
+                        foundActive = true
+                        allLessonsCompleted = false
+                    } else {
+                        lessonState = .locked
+                        allLessonsCompleted = false
+                    }
+                } else if previousLessonUnlocked && !foundActive {
+                    lessonState = .active
+                    foundActive = true
+                    allLessonsCompleted = false
+                } else {
+                    lessonState = .locked
+                    allLessonsCompleted = false
+                }
+
+                previousLessonUnlocked = lessonState == .completed
+
+                var daysAgo: Int?
+                if let lastReviewed = userAtom?.lastReviewedAt {
+                    daysAgo = Calendar.current.dateComponents([.day], from: lastReviewed, to: Date()).day
+                }
+
+                let capLocked = unitCapped && lessonState == .active
+
+                lessons.append(CourseMapLesson(
+                    id: atom.id.uuidString,
+                    atomId: atom.id.uuidString,
+                    unitId: unitName,
+                    unitName: unitName,
+                    name: atom.concept,
+                    description: atom.sourceRef ?? "Review this concept to strengthen your understanding.",
+                    icon: iconForConcept(atom.concept, subject: currentSubject),
+                    state: lessonState,
+                    masteryStage: stage,
+                    lastReviewedDaysAgo: daysAgo,
+                    correctCount: userAtom?.correctCount ?? 0,
+                    incorrectCount: userAtom?.incorrectCount ?? 0,
+                    isDailyCapLocked: capLocked
+                ))
+            }
+
+            let unitState: CourseMapUnitState
+            if allLessonsCompleted && !lessons.isEmpty {
+                unitState = .completed
+            } else if !previousUnitCompleted && !lessons.contains(where: { $0.state == .active }) {
+                unitState = .locked
+            } else {
+                unitState = .active
+            }
+
+            builtUnits.append(CourseMapUnit(
+                id: unitName,
+                name: unitName,
+                icon: sortedAtoms.first.map { iconForConcept($0.concept, subject: currentSubject) } ?? "book.fill",
+                unitOrder: sortedAtoms.first?.unitOrder ?? 0,
+                lessons: lessons,
+                state: unitState
+            ))
+
+            previousUnitCompleted = allLessonsCompleted && !lessons.isEmpty
+        }
+
+        if builtUnits.isEmpty {
+            builtUnits = buildMockUnits()
+        }
+
+        units = builtUnits
+        totalLessons = builtUnits.flatMap(\.lessons).count
+        completedLessons = builtUnits.flatMap(\.lessons).filter { $0.state == .completed }.count
+        subjectScore = srsEngine.computeSubjectScore(userId: userId, subject: subjectKey)
+
+        if let idx = builtUnits.firstIndex(where: { $0.state == .active }) {
+            activeUnitIndex = idx
+        }
+    }
+
+    func switchSubject(to subject: Subject) {
+        withAnimation(.easeOut(duration: 0.3)) {
+            currentSubject = subject
+            showSubjectDropdown = false
+            hasAnimatedPath = false
+        }
+    }
+
+    func switchCoursePath(to path: CoursePath) {
+        withAnimation(.easeOut(duration: 0.3)) {
+            currentCoursePath = path
+            hasAnimatedPath = false
+        }
+    }
+
+    func selectLesson(_ lesson: CourseMapLesson, dailyAccessService: DailyAccessService) {
+        if lesson.state == .locked && !lesson.isDailyCapLocked {
+            triggerLockedTooltip(for: lesson)
+            return
+        }
+
+        selectedLesson = lesson
+
+        let allLessons = units.flatMap(\.lessons)
+        var previousName: String?
+        if let idx = allLessons.firstIndex(where: { $0.id == lesson.id }), idx > 0 {
+            previousName = allLessons[idx - 1].name
+        }
+
+        let activeUnitName = dailyAccessService.activeUnitName(from: units) ?? ""
+
+        if lesson.isDailyCapLocked {
+            selectedLessonAccessState = .capLocked(activeUnitName: activeUnitName)
+        } else {
+            selectedLessonAccessState = dailyAccessService.checkAccess(
+                lessonUnitId: lesson.unitId,
+                lessonState: lesson.state,
+                previousLessonName: previousName,
+                isPro: isPro
+            )
+            if case .capLocked = selectedLessonAccessState {
+                let resolvedName = dailyAccessService.activeUnitName(from: units) ?? activeUnitName
+                selectedLessonAccessState = .capLocked(activeUnitName: resolvedName)
+            }
+        }
+
+        showLessonSheet = true
+    }
+
+    func launchFocusedSession(
+        lesson: CourseMapLesson,
+        isReview: Bool,
+        contentCacheService: ContentCacheService,
+        localDataService: LocalDataService,
+        dailyAccessService: DailyAccessService,
+        userId: String
+    ) {
+        guard let atomUUID = UUID(uuidString: lesson.atomId) else { return }
+
+        let contentAtom = contentCacheService.contentAtoms.first(where: { $0.id == atomUUID })
+        guard let atom = contentAtom else { return }
+
+        let isNew = lesson.masteryStage == .unseen
+        let userAtom = localDataService.fetchUserAtom(userId: userId, atomId: lesson.atomId)
+
+        let snapshot = LocalUserAtomSnapshot(
+            atomId: lesson.atomId,
+            userId: userId,
+            subject: currentSubject.rawValue,
+            stage: userAtom?.stage ?? MasteryStage.unseen.rawValue,
+            nextReviewDate: userAtom?.nextReviewDate,
+            correctCount: userAtom?.correctCount ?? 0,
+            incorrectCount: userAtom?.incorrectCount ?? 0,
+            hintUsageCount: userAtom?.hintUsageCount ?? 0,
+            lastReviewedAt: userAtom?.lastReviewedAt
+        )
+
+        let queueItem = QueueItem(
+            id: lesson.atomId,
+            atom: atom,
+            userAtom: snapshot,
+            isNew: isNew && !isReview,
+            initialStage: MasteryStage(rawValue: snapshot.stage) ?? .unseen,
+            subject: currentSubject.rawValue
+        )
+
+        if !isReview {
+            dailyAccessService.activateUnit(lesson.unitId)
+        }
+
+        let config = SessionConfig(
+            subject: currentSubject,
+            queue: [queueItem],
+            sessionType: .focused,
+            userId: userId,
+            source: .learnTab
+        )
+
+        sessionConfig = config
+        showLessonSheet = false
+        showSession = true
+    }
+
+    func handleSessionComplete(
+        summary: SessionSummary,
+        dailyAccessService: DailyAccessService
+    ) {
+        showSession = false
+        sessionConfig = nil
+
+        if summary.newItemsLearned > 0 {
+            dailyAccessService.recordLessonCompleted()
+        }
+    }
+
+    func triggerLockedTooltip(for lesson: CourseMapLesson) {
+        let allLessons = units.flatMap(\.lessons)
+        if let idx = allLessons.firstIndex(where: { $0.id == lesson.id }), idx > 0 {
+            lockedTooltipPreviousName = allLessons[idx - 1].name
+        } else {
+            lockedTooltipPreviousName = "the previous lesson"
+        }
+        lockedTooltipLessonId = lesson.id
+        showLockedTooltip = true
+
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            showLockedTooltip = false
+            lockedTooltipLessonId = nil
+        }
+    }
+
+    private func buildMockUnits() -> [CourseMapUnit] {
+        currentSubject.units(for: currentCoursePath).enumerated().map { index, unit in
+            let lessons = (1...unit.lessonCount).map { lessonIdx in
+                let state: CourseMapLessonState
+                if index == 0 && lessonIdx == 1 {
+                    state = .active
+                } else {
+                    state = .locked
+                }
+                return CourseMapLesson(
+                    id: "\(unit.name)-\(lessonIdx)",
+                    atomId: "\(unit.name)-\(lessonIdx)",
+                    unitId: unit.name,
+                    unitName: unit.name,
+                    name: "Lesson \(lessonIdx)",
+                    description: "Explore this concept in \(unit.name).",
+                    icon: unit.icon,
+                    state: state,
+                    masteryStage: .unseen,
+                    lastReviewedDaysAgo: nil
+                )
+            }
+            return CourseMapUnit(
+                id: unit.name,
+                name: unit.name,
+                icon: unit.icon,
+                unitOrder: index,
+                lessons: lessons,
+                state: index == 0 ? .active : .locked
+            )
+        }
+    }
+
+    private func iconForConcept(_ concept: String, subject: Subject) -> String {
+        let lowered = concept.lowercased()
+        if lowered.contains("photosynthesis") || lowered.contains("chloroplast") { return "sun.max.fill" }
+        if lowered.contains("respiration") || lowered.contains("glycolysis") || lowered.contains("fermentation") { return "flame.fill" }
+        if lowered.contains("atp") || lowered.contains("energy currency") { return "bolt.circle" }
+        if lowered.contains("enzyme") { return "gearshape.2" }
+        if lowered.contains("mitochondri") { return "bolt.fill" }
+        if lowered.contains("membrane") || lowered.contains("phospholipid") { return "circle.dashed" }
+        if lowered.contains("nucleus") || lowered.contains("nuclear") { return "circle.circle" }
+        if lowered.contains("ribosome") { return "circle.grid.2x1" }
+        if lowered.contains("golgi") { return "tray.full" }
+        if lowered.contains("lysosome") { return "trash.circle" }
+        if lowered.contains("cytoskeleton") { return "line.3.crossed.swirl.circle" }
+        if lowered.contains("endoplasmic") { return "square.stack.3d.up" }
+        if lowered.contains("cell") { return "circle.hexagongrid" }
+        if lowered.contains("dna") || lowered.contains("nucleic") { return "dna" }
+        if lowered.contains("genetic") { return "dna" }
+        if lowered.contains("protein") || lowered.contains("amino acid") { return "scribble.variable" }
+        if lowered.contains("carbohydrate") || lowered.contains("glucose") || lowered.contains("sugar") { return "cube" }
+        if lowered.contains("lipid") || lowered.contains("fat") { return "drop.halffull" }
+        if lowered.contains("water") || lowered.contains("cohesion") || lowered.contains("adhesion") { return "drop.fill" }
+        if lowered.contains("ph") || lowered.contains("acid") || lowered.contains("base") || lowered.contains("buffer") { return "gauge.with.dots.needle.33percent" }
+        if lowered.contains("covalent") || lowered.contains("ionic") || lowered.contains("bond") { return "link" }
+        if lowered.contains("hydrogen bond") { return "link.circle" }
+        if lowered.contains("electron") || lowered.contains("valence") { return "sparkle" }
+        if lowered.contains("element") || lowered.contains("chnops") || lowered.contains("atom") { return "atom" }
+        if lowered.contains("dehydration") || lowered.contains("hydrolysis") || lowered.contains("polymer") { return "arrow.triangle.2.circlepath" }
+        if lowered.contains("osmosis") || lowered.contains("diffusion") || lowered.contains("transport") { return "arrow.left.arrow.right" }
+        if lowered.contains("thermodynamic") || lowered.contains("entropy") { return "thermometer.medium" }
+        if lowered.contains("calvin") || lowered.contains("rubisco") { return "arrow.3.trianglepath" }
+        if lowered.contains("electron transport") || lowered.contains("oxidative") { return "bolt.horizontal" }
+        if lowered.contains("citric") || lowered.contains("krebs") { return "arrow.triangle.2.circlepath" }
+        if lowered.contains("pyruvate") { return "arrow.right.circle" }
+        if lowered.contains("evolution") || lowered.contains("fossil") { return "fossil.shell.fill" }
+        if lowered.contains("ecology") || lowered.contains("ecosystem") { return "leaf.arrow.triangle.circlepath" }
+        if lowered.contains("force") || lowered.contains("motion") { return "figure.run" }
+        if lowered.contains("energy") { return "bolt.fill" }
+        if lowered.contains("wave") { return "waveform.path" }
+        if lowered.contains("electric") { return "powerplug.fill" }
+        if lowered.contains("reaction") { return "flame.fill" }
+        return subject.icon
+    }
+}
