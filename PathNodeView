@@ -1,0 +1,312 @@
+import SwiftUI
+
+nonisolated enum PathNodeState: Sendable {
+    case completed
+    case current
+    case locked
+    case needsReview
+}
+
+struct PathNodeView: View {
+    let section: PathSection
+    let state: PathNodeState
+    let accentColor: Color
+    let globalIndex: Int
+    var isSelected: Bool = false
+    var showGlow: Bool = false
+    let onTap: () -> Void
+
+    private let discSize: CGFloat = 76
+    private let edgeOffset: CGFloat = 6
+    private let innerRingSize: CGFloat = 52
+    private let glowRingSize: CGFloat = 92
+    private let rotationAngle: Double = -25
+    private let perspective: CGFloat = 0.4
+
+    @State private var spinAngle: Double = 0
+    @State private var shimmerPhase: CGFloat = -1
+    @State private var isPressed: Bool = false
+    @State private var isVisible: Bool = false
+    @State private var unlockPhase: UnlockPhase = .idle
+
+    nonisolated enum UnlockPhase: Sendable {
+        case idle
+        case colorTransition
+        case scalePop
+        case glowFadeIn
+        case iconCrossfade
+        case complete
+    }
+
+    var body: some View {
+        Button {
+            onTap()
+        } label: {
+            nodeBody
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isPressed ? (UIAccessibility.isReduceMotionEnabled ? 0.97 : 0.92) : unlockScale)
+        .opacity(isPressed && UIAccessibility.isReduceMotionEnabled ? 0.7 : 1.0)
+        .opacity(nodeOpacity)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !isPressed {
+                        withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                            isPressed = true
+                        }
+                    }
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isPressed = false
+                    }
+                }
+        )
+        .sensoryFeedback(.impact(weight: .light), trigger: isPressed) { _, newValue in
+            newValue
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(accessibilityHint)
+        .onAppear {
+            isVisible = true
+        }
+        .onDisappear {
+            isVisible = false
+            stopSpinRing()
+        }
+        .onChange(of: showGlow) { oldValue, newValue in
+            guard isVisible else { return }
+            if newValue {
+                startSpinRing()
+            } else {
+                stopSpinRing()
+            }
+        }
+        .onChange(of: isVisible) { _, nowVisible in
+            if nowVisible && showGlow {
+                startSpinRing()
+            }
+        }
+    }
+
+    private var unlockScale: CGFloat {
+        unlockPhase == .scalePop ? 1.15 : 1.0
+    }
+
+    func playUnlockAnimation() {
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            unlockPhase = .complete
+            return
+        }
+
+        withAnimation(.easeOut(duration: 0.5)) {
+            unlockPhase = .colorTransition
+        }
+
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.5).delay(0.4)) {
+            unlockPhase = .scalePop
+        }
+
+        withAnimation(.easeOut(duration: 0.3).delay(0.7)) {
+            unlockPhase = .iconCrossfade
+        }
+
+        withAnimation(.easeOut(duration: 0.3).delay(0.9)) {
+            unlockPhase = .glowFadeIn
+        }
+
+        Task {
+            try? await Task.sleep(for: .seconds(1.1))
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                unlockPhase = .complete
+            }
+            PhloeHaptics.shared.trigger(.correctAnswer)
+        }
+    }
+
+    private var nodeBody: some View {
+        ZStack {
+            if showGlow {
+                spinningRing
+            }
+
+            discStack
+                .rotation3DEffect(.degrees(rotationAngle), axis: (x: 1, y: 0, z: 0), perspective: perspective)
+        }
+        .frame(width: glowRingSize + 8, height: glowRingSize + 8)
+        .onAppear {
+            startAnimations()
+        }
+    }
+
+    private var discStack: some View {
+        ZStack {
+            Circle()
+                .fill(edgeColor)
+                .frame(width: discSize, height: discSize)
+                .offset(y: edgeOffset)
+
+            Circle()
+                .fill(faceColor)
+                .frame(width: discSize, height: discSize)
+
+            if state == .completed || state == .current || state == .needsReview {
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.25), lineWidth: 2)
+                    .frame(width: innerRingSize, height: innerRingSize)
+            }
+
+            nodeIcon
+
+            if state == .completed {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(shimmerPhase > 0 ? 0.25 : 0), .clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: discSize, height: discSize)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var nodeIcon: some View {
+        Group {
+            switch state {
+            case .completed:
+                Image(systemName: "checkmark")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+            case .current:
+                Image(systemName: "play.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+            case .locked:
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+            case .needsReview:
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+    }
+
+    private var faceColor: Color {
+        switch state {
+        case .completed: accentColor
+        case .current: accentColor
+        case .locked: Color(UIColor.systemGray4)
+        case .needsReview: accentColor
+        }
+    }
+
+    private var edgeColor: Color {
+        switch state {
+        case .completed: Color(hex: "248A3D")
+        case .current: Color(hex: "248A3D")
+        case .locked: Color(UIColor.systemGray3)
+        case .needsReview: Color(hex: "248A3D")
+        }
+    }
+
+    private var nodeOpacity: Double {
+        switch state {
+        case .completed: 1.0
+        case .current: 1.0
+        case .locked: 0.5
+        case .needsReview: 0.85
+        }
+    }
+
+    private var accessibilityLabel: String {
+        let title = "\(section.sectionNumber) \(section.title)"
+        switch state {
+        case .completed: return "\(title), completed"
+        case .current: return "\(title), current lesson"
+        case .locked: return "\(title), locked"
+        case .needsReview: return "\(title), needs review"
+        }
+    }
+
+    private var accessibilityHint: String {
+        switch state {
+        case .completed: return "Double-tap to practice"
+        case .current: return "Double-tap to start"
+        case .locked: return "Double-tap for details"
+        case .needsReview: return "Double-tap to review"
+        }
+    }
+
+    private var spinningRing: some View {
+        let ringSize: CGFloat = discSize + 16
+        let strokeWidth: CGFloat = 5.5
+        return Group {
+            if UIAccessibility.isReduceMotionEnabled {
+                Circle()
+                    .stroke(accentColor.opacity(0.5), style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round))
+                    .frame(width: ringSize, height: ringSize)
+                    .shadow(color: accentColor.opacity(0.3), radius: 4)
+                    .offset(y: edgeOffset / 2)
+                    .rotation3DEffect(.degrees(rotationAngle), axis: (x: 1, y: 0, z: 0), perspective: perspective)
+            } else {
+                Circle()
+                    .stroke(
+                        AngularGradient(
+                            stops: [
+                                .init(color: accentColor.opacity(0), location: 0.0),
+                                .init(color: accentColor.opacity(0.15), location: 0.15),
+                                .init(color: accentColor.opacity(0.7), location: 0.5),
+                                .init(color: accentColor, location: 0.75),
+                                .init(color: accentColor.opacity(0.7), location: 0.85),
+                                .init(color: accentColor.opacity(0), location: 1.0)
+                            ],
+                            center: .center,
+                            startAngle: .degrees(0),
+                            endAngle: .degrees(360)
+                        ),
+                        style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round)
+                    )
+                    .frame(width: ringSize, height: ringSize)
+                    .rotationEffect(.degrees(spinAngle))
+                    .shadow(color: accentColor.opacity(0.4), radius: 6)
+                    .offset(y: edgeOffset / 2)
+                    .rotation3DEffect(.degrees(rotationAngle), axis: (x: 1, y: 0, z: 0), perspective: perspective)
+            }
+        }
+    }
+
+    private func startSpinRing() {
+        spinAngle = 0
+        withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+            spinAngle = 360
+        }
+    }
+
+    private func stopSpinRing() {
+        withAnimation(.easeOut(duration: 0.3)) {
+            spinAngle = 0
+        }
+    }
+
+    private func startAnimations() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+
+        if showGlow && isVisible {
+            startSpinRing()
+        }
+
+        if state == .completed {
+            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true).delay(Double(globalIndex) * 0.3)) {
+                shimmerPhase = 1
+            }
+        }
+    }
+}
