@@ -1,0 +1,579 @@
+import SwiftUI
+
+struct LearnView: View {
+    let accentColor: Color
+
+    @State private var viewModel = LearnViewModel()
+    @Environment(OnboardingState.self) private var onboarding
+    @Environment(LocalDataService.self) private var localDataService
+    @Environment(ContentCacheService.self) private var contentCacheService
+    @Environment(SRSEngine.self) private var srsEngine
+    @Environment(DailyAccessService.self) private var dailyAccessService
+    @Environment(SubscriptionService.self) private var subscriptionService
+    @Environment(SessionRecoveryService.self) private var sessionRecoveryService
+
+    @State private var showPaywall: Bool = false
+    @State private var showOfflineBanner: Bool = false
+    @State private var showJumpButton: Bool = false
+    @State private var scrollProxy: ScrollViewProxy?
+    @State private var selectedPathNode: (section: PathSection, state: PathNodeState)?
+    @State private var showPathNodeSheet: Bool = false
+    @State private var scrollOffset: CGFloat = 0
+    @State private var showStreakDetail: Bool = false
+    @State private var savedScrollSectionId: String?
+    @State private var hasRestoredScroll: Bool = false
+
+    private let pathUnits = LearningPathData.biologyAPUnits
+    private let completedSections = LearningPathData.defaultCompletedSections
+    private let currentSection = LearningPathData.defaultCurrentSection
+
+    private var collapseProgress: CGFloat {
+        min(max(scrollOffset / 160, 0), 1)
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            learnBackground
+
+            VStack(spacing: 0) {
+                OfflineBannerView(isVisible: showOfflineBanner)
+
+                collapsibleTopBar
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+
+                windingPathScroll
+            }
+
+            if viewModel.showSubjectDropdown {
+                SubjectDropdownSheet(
+                    currentSubject: viewModel.currentSubject,
+                    subjectScore: viewModel.subjectScore,
+                    onSelect: { subject in
+                        viewModel.switchSubject(to: subject)
+                        reloadData()
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            viewModel.showSubjectDropdown = false
+                        }
+                    }
+                )
+                .transition(.identity)
+            }
+
+            if showJumpButton && !showPathNodeSheet {
+                jumpToCurrentButton
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 20)
+                    .padding(.bottom, 24)
+                    .transition(.scale.combined(with: .opacity))
+            }
+
+            if showPathNodeSheet, let node = selectedPathNode {
+                PathNodeSheetView(
+                    section: node.section,
+                    state: node.state,
+                    accentColor: viewModel.currentSubject.accentColor,
+                    isPro: subscriptionService.isPro,
+                    onAction: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            showPathNodeSheet = false
+                        }
+                        switch node.state {
+                        case .current:
+                            break
+                        case .completed:
+                            break
+                        case .locked:
+                            break
+                        case .needsReview:
+                            break
+                        }
+                    },
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            showPathNodeSheet = false
+                        }
+                    }
+                )
+                .padding(.bottom, 16)
+            }
+        }
+        .onAppear {
+            viewModel.currentSubject = onboarding.selectedSubject ?? .biology
+            reloadData()
+            PhloeHaptics.shared.prepareAll()
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                showOfflineBanner = !NetworkMonitor.shared.isConnected
+            }
+        }
+        .onChange(of: NetworkMonitor.shared.isConnected) { _, newValue in
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.85)) {
+                showOfflineBanner = !newValue
+            }
+        }
+        .sheet(isPresented: $viewModel.showLessonSheet) {
+            if let lesson = viewModel.selectedLesson {
+                LessonDetailSheet(
+                    lesson: lesson,
+                    accentColor: viewModel.currentSubject.accentColor,
+                    accessState: viewModel.selectedLessonAccessState,
+                    isPro: viewModel.isPro,
+                    onStartLesson: {
+                        viewModel.launchFocusedSession(
+                            lesson: lesson,
+                            isReview: false,
+                            contentCacheService: contentCacheService,
+                            localDataService: localDataService,
+                            dailyAccessService: dailyAccessService,
+                            userId: onboarding.anonymousUserID
+                        )
+                    },
+                    onPracticeAgain: {
+                        viewModel.launchFocusedSession(
+                            lesson: lesson,
+                            isReview: true,
+                            contentCacheService: contentCacheService,
+                            localDataService: localDataService,
+                            dailyAccessService: dailyAccessService,
+                            userId: onboarding.anonymousUserID
+                        )
+                    },
+                    onUpgradeTapped: {
+                        viewModel.showLessonSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showPaywall = true
+                        }
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+        }
+        .sheet(isPresented: $showStreakDetail) {
+            StreakDetailView(
+                currentStreak: viewModel.streakDays,
+                longestStreak: viewModel.streakDays,
+                accentColor: viewModel.currentSubject.accentColor,
+                streakCommitmentDays: nil
+            )
+        }
+        .fullScreenCover(isPresented: $viewModel.showSession) {
+            if let config = viewModel.sessionConfig {
+                SessionView(
+                    config: config,
+                    onComplete: { summary in
+                        viewModel.handleSessionComplete(
+                            summary: summary,
+                            dailyAccessService: dailyAccessService
+                        )
+                        reloadData()
+                    },
+                    onExit: {
+                        viewModel.showSession = false
+                        viewModel.sessionConfig = nil
+                        reloadData()
+                    }
+                )
+                .environment(sessionRecoveryService)
+            }
+        }
+    }
+
+    // MARK: - Background
+
+    private var learnBackground: some View {
+        LinearGradient(
+            colors: [
+                Color(hex: "F0F4F1"),
+                Color(hex: "F6F8F7"),
+                Color(hex: "FAFAFA"),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Collapsible Top Bar
+
+    private var collapsibleTopBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    viewModel.showSubjectDropdown = true
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: viewModel.currentSubject.icon)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(viewModel.currentSubject.accentColor)
+                        )
+
+                    Text(viewModel.currentSubject.displayName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(PhloeTheme.Colors.textPrimary)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 14)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                )
+            }
+            .opacity(collapseProgress)
+            .scaleEffect(0.85 + 0.15 * collapseProgress, anchor: .leading)
+            .allowsHitTesting(collapseProgress > 0.3)
+            .accessibilityLabel("Subject: \(viewModel.currentSubject.displayName). Tap to change.")
+
+            Spacer()
+
+            Button {
+                showStreakDetail = true
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.orange)
+                    Text("\(viewModel.streakDays)")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(PhloeTheme.Colors.textPrimary)
+                        .contentTransition(.numericText())
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(.white.opacity(0.92))
+                        .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                )
+            }
+            .accessibilityLabel("Current streak: \(viewModel.streakDays) days. Tap to view details.")
+        }
+        .frame(height: 40)
+    }
+
+    // MARK: - Expanded Course Header
+
+    private var expandedCourseHeader: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                viewModel.currentSubject.accentColor.opacity(0.18),
+                                viewModel.currentSubject.accentColor.opacity(0.03),
+                            ],
+                            center: .center,
+                            startRadius: 8,
+                            endRadius: 56
+                        )
+                    )
+                    .frame(width: 100, height: 100)
+
+                Circle()
+                    .strokeBorder(
+                        viewModel.currentSubject.accentColor.opacity(0.18),
+                        lineWidth: 1.5
+                    )
+                    .frame(width: 100, height: 100)
+
+                Image(systemName: viewModel.currentSubject.icon)
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundStyle(viewModel.currentSubject.accentColor)
+            }
+            .padding(.top, 12)
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    viewModel.showSubjectDropdown = true
+                }
+            } label: {
+                VStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Text(viewModel.currentSubject.displayName)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(PhloeTheme.Colors.textPrimary)
+
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(PhloeTheme.Colors.textSecondary)
+                    }
+
+                    Text(viewModel.currentSubject.courseDescription)
+                        .font(.system(size: 15))
+                        .foregroundStyle(PhloeTheme.Colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+            }
+
+            HStack(spacing: 20) {
+                HStack(spacing: 5) {
+                    Image(systemName: "book.closed.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(viewModel.currentSubject.accentColor)
+                    Text("\(totalSectionCount) Lessons")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PhloeTheme.Colors.textSecondary)
+                }
+
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(viewModel.currentSubject.accentColor)
+                    Text("\(completedSections.count) Completed")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PhloeTheme.Colors.textSecondary)
+                }
+            }
+        }
+        .padding(.bottom, 20)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(viewModel.currentSubject.displayName). \(viewModel.currentSubject.courseDescription). \(totalSectionCount) lessons, \(completedSections.count) completed.")
+    }
+
+    // MARK: - Winding Path Scroll
+
+    private var windingPathScroll: some View {
+        ScrollViewReader { proxy in
+            scrollContent
+                .scrollIndicators(.hidden)
+                .refreshable {
+                    reloadData()
+                }
+                .onAppear {
+                    scrollProxy = proxy
+                    if let savedId = savedScrollSectionId, hasRestoredScroll == false {
+                        hasRestoredScroll = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            proxy.scrollTo(savedId, anchor: .center)
+                        }
+                    } else {
+                        scrollToCurrentNode(proxy: proxy)
+                    }
+                }
+                .onDisappear {
+                    savedScrollSectionId = nearestVisibleSectionId
+                    hasRestoredScroll = false
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geo in
+                    geo.contentOffset.y
+                } action: { _, newValue in
+                    scrollOffset = newValue
+                }
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    let currentNodeY = estimatedCurrentNodeY
+                    let visibleMidY = geo.contentOffset.y + geo.containerSize.height / 2
+                    return abs(currentNodeY - visibleMidY) > geo.containerSize.height * 1.2
+                } action: { _, isOffScreen in
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        showJumpButton = isOffScreen
+                    }
+                }
+        }
+    }
+
+    private var scrollContent: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                expandedCourseHeader
+                    .opacity(max(0.0, 1.0 - collapseProgress * 1.6))
+
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(pathUnits.enumerated()), id: \.element.id) { unitIndex, unit in
+                        unitBlock(unit: unit, unitIndex: unitIndex)
+
+                        if unitIndex < pathUnits.count - 1 {
+                            Spacer().frame(height: 40)
+                        }
+                    }
+
+                    Spacer().frame(height: 120)
+                }
+            }
+        }
+    }
+
+    private func unitBlock(unit: PathUnit, unitIndex: Int) -> some View {
+        let unitSections = unit.allSections
+        let unitCompleted = unitSections.filter { completedSections.contains($0.id) }.count
+        let unitHasCurrent = unitSections.contains { $0.id == currentSection }
+        let unitHasCompleted = unitCompleted > 0
+
+        return VStack(spacing: 0) {
+            WindingPathUnitHeaderView(
+                unit: unit,
+                completedCount: unitCompleted,
+                totalCount: unitSections.count,
+                accentColor: viewModel.currentSubject.accentColor,
+                isActive: unitHasCurrent || unitHasCompleted
+            )
+            .padding(.bottom, 32)
+
+            ForEach(unit.chapters) { chapter in
+                chapterBlock(chapter: chapter, inUnit: unit)
+            }
+        }
+    }
+
+    private func chapterBlock(chapter: PathChapter, inUnit unit: PathUnit) -> some View {
+        let allPriorSections = unit.chapters
+            .prefix(while: { $0.id != chapter.id })
+            .flatMap(\.sections)
+        let globalOffset = pathUnits
+            .prefix(while: { $0.id != unit.id })
+            .flatMap(\.allSections).count + allPriorSections.count
+
+        return VStack(spacing: 0) {
+            ForEach(Array(chapter.sections.enumerated()), id: \.element.id) { sectionIndex, section in
+                let globalIndex = globalOffset + sectionIndex
+                let state = nodeState(for: section)
+                let position = windingPosition(for: globalIndex)
+
+                PathNodeView(
+                    section: section,
+                    state: state,
+                    accentColor: viewModel.currentSubject.accentColor,
+                    globalIndex: globalIndex,
+                    isSelected: showPathNodeSheet && selectedPathNode?.section.id == section.id,
+                    showGlow: showPathNodeSheet
+                        ? selectedPathNode?.section.id == section.id
+                        : state == .current,
+                    onTap: {
+                        if showPathNodeSheet && selectedPathNode?.section.id == section.id {
+                            PhloeHaptics.shared.trigger(.sheetDismiss)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                showPathNodeSheet = false
+                            }
+                        } else {
+                            PhloeHaptics.shared.trigger(.nodeSelect)
+                            selectedPathNode = (section, state)
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                showPathNodeSheet = true
+                            }
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                scrollProxy?.scrollTo(section.id, anchor: .center)
+                            }
+                            announceForVoiceOver(section.title)
+                        }
+                    }
+                )
+                .offset(x: position.offsetX)
+                .padding(.vertical, 20)
+                .id(section.id)
+            }
+        }
+    }
+
+    // MARK: - Jump To Current
+
+    private var jumpToCurrentButton: some View {
+        Button {
+            PhloeHaptics.shared.trigger(.buttonTap)
+            if let proxy = scrollProxy {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                    proxy.scrollTo(currentSection, anchor: .center)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Current")
+                    .font(.system(size: 13, weight: .bold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(viewModel.currentSubject.accentColor)
+                    .shadow(color: viewModel.currentSubject.accentColor.opacity(0.35), radius: 10, y: 4)
+            )
+        }
+        .accessibilityLabel("Jump to current lesson")
+    }
+
+    // MARK: - Path Positioning
+
+    private struct WindingPosition {
+        let offsetX: CGFloat
+    }
+
+    private func windingPosition(for index: Int) -> WindingPosition {
+        let cycle = index % 4
+        switch cycle {
+        case 0: return WindingPosition(offsetX: 0)
+        case 1: return WindingPosition(offsetX: 60)
+        case 2: return WindingPosition(offsetX: 0)
+        case 3: return WindingPosition(offsetX: -60)
+        default: return WindingPosition(offsetX: 0)
+        }
+    }
+
+    // MARK: - Node State
+
+    private func nodeState(for section: PathSection) -> PathNodeState {
+        if completedSections.contains(section.id) {
+            return .completed
+        } else if section.id == currentSection {
+            return .current
+        }
+        return .locked
+    }
+
+    // MARK: - Helpers
+
+    private var totalSectionCount: Int {
+        pathUnits.flatMap(\.allSections).count
+    }
+
+    private var estimatedCurrentNodeY: CGFloat {
+        let allSections = pathUnits.flatMap(\.allSections)
+        guard let idx = allSections.firstIndex(where: { $0.id == currentSection }) else { return 300 }
+        return CGFloat(idx) * 100 + 420
+    }
+
+    private var nearestVisibleSectionId: String? {
+        let allSections = pathUnits.flatMap(\.allSections)
+        let estimatedVisibleIndex = Int((scrollOffset - 300) / 100)
+        let clampedIndex = max(0, min(estimatedVisibleIndex, allSections.count - 1))
+        return allSections.isEmpty ? nil : allSections[clampedIndex].id
+    }
+
+    private func scrollToCurrentNode(proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            withAnimation(.easeOut(duration: 0.5)) {
+                proxy.scrollTo(currentSection, anchor: .center)
+            }
+        }
+    }
+
+    private func announceForVoiceOver(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            UIAccessibility.post(notification: .screenChanged, argument: text)
+        }
+    }
+
+    private func reloadData() {
+        viewModel.loadData(
+            contentCacheService: contentCacheService,
+            localDataService: localDataService,
+            srsEngine: srsEngine,
+            dailyAccessService: dailyAccessService,
+            userId: onboarding.anonymousUserID,
+            isPro: subscriptionService.isPro
+        )
+    }
+}
