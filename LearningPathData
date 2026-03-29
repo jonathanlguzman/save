@@ -1,0 +1,165 @@
+import Foundation
+
+nonisolated struct PathSection: Identifiable, Sendable {
+    let id: String
+    let sectionNumber: String
+    let title: String
+    let chapterId: String
+
+    var displayLabel: String {
+        "\(sectionNumber) \(title)"
+    }
+}
+
+nonisolated struct PathChapter: Identifiable, Sendable {
+    let id: String
+    let number: Int
+    let title: String
+    let description: String
+    let unitId: String
+    let sections: [PathSection]
+}
+
+nonisolated struct PathUnit: Identifiable, Sendable {
+    let id: String
+    let title: String
+    let chapters: [PathChapter]
+
+    var allSections: [PathSection] {
+        chapters.flatMap(\.sections)
+    }
+}
+
+nonisolated enum LearningPathData {
+
+    static let biologyAPUnits: [PathUnit] = [
+        PathUnit(
+            id: "unit_chemistry_of_life",
+            title: "The Chemistry of Life",
+            chapters: [
+                PathChapter(id: "ch1", number: 1, title: "The Study of Life", description: "Discover what makes biology a science and how life is studied", unitId: "unit_chemistry_of_life", sections: [
+                    PathSection(id: "1.1", sectionNumber: "1.1", title: "The Science of Biology", chapterId: "ch1"),
+                    PathSection(id: "1.2", sectionNumber: "1.2", title: "Themes and Concepts of Biology", chapterId: "ch1"),
+                ]),
+                PathChapter(id: "ch2", number: 2, title: "The Chemical Foundation of Life", description: "Explore atoms, water, carbon, and the molecules that make life possible", unitId: "unit_chemistry_of_life", sections: [
+                    PathSection(id: "2.1", sectionNumber: "2.1", title: "Atoms, Isotopes, Ions, and Molecules", chapterId: "ch2"),
+                    PathSection(id: "2.2", sectionNumber: "2.2", title: "Water", chapterId: "ch2"),
+                    PathSection(id: "2.3", sectionNumber: "2.3", title: "Carbon", chapterId: "ch2"),
+                ]),
+                PathChapter(id: "ch3", number: 3, title: "Biological Macromolecules", description: "Learn how carbohydrates, lipids, proteins, and nucleic acids build life", unitId: "unit_chemistry_of_life", sections: [
+                    PathSection(id: "3.1", sectionNumber: "3.1", title: "Synthesis of Biological Macromolecules", chapterId: "ch3"),
+                    PathSection(id: "3.2", sectionNumber: "3.2", title: "Carbohydrates", chapterId: "ch3"),
+                    PathSection(id: "3.3", sectionNumber: "3.3", title: "Lipids", chapterId: "ch3"),
+                    PathSection(id: "3.4", sectionNumber: "3.4", title: "Proteins", chapterId: "ch3"),
+                    PathSection(id: "3.5", sectionNumber: "3.5", title: "Nucleic Acids", chapterId: "ch3"),
+                ]),
+            ]
+        ),
+        PathUnit(
+            id: "unit_the_cell",
+            title: "The Cell",
+            chapters: [
+                PathChapter(id: "ch4", number: 4, title: "Cell Structure", description: "Tour the organelles and structures inside prokaryotic and eukaryotic cells", unitId: "unit_the_cell", sections: [
+                    PathSection(id: "4.1", sectionNumber: "4.1", title: "Studying Cells", chapterId: "ch4"),
+                    PathSection(id: "4.2", sectionNumber: "4.2", title: "Prokaryotic Cells", chapterId: "ch4"),
+                    PathSection(id: "4.3", sectionNumber: "4.3", title: "Eukaryotic Cells", chapterId: "ch4"),
+                    PathSection(id: "4.4", sectionNumber: "4.4", title: "The Endomembrane System and Proteins", chapterId: "ch4"),
+                    PathSection(id: "4.5", sectionNumber: "4.5", title: "Cytoskeleton", chapterId: "ch4"),
+                    PathSection(id: "4.6", sectionNumber: "4.6", title: "Connections between Cells and Cellular Activities", chapterId: "ch4"),
+                ]),
+                PathChapter(id: "ch5", number: 5, title: "Structure and Function of Plasma Membranes", description: "Understand how cells control what enters and leaves through their membranes", unitId: "unit_the_cell", sections: [
+                    PathSection(id: "5.1", sectionNumber: "5.1", title: "Components and Structure", chapterId: "ch5"),
+                    PathSection(id: "5.2", sectionNumber: "5.2", title: "Passive Transport", chapterId: "ch5"),
+                    PathSection(id: "5.3", sectionNumber: "5.3", title: "Active Transport", chapterId: "ch5"),
+                    PathSection(id: "5.4", sectionNumber: "5.4", title: "Bulk Transport", chapterId: "ch5"),
+                ]),
+                PathChapter(id: "ch6", number: 6, title: "Metabolism", description: "Master energy flow, thermodynamics, enzymes, and ATP in living systems", unitId: "unit_the_cell", sections: [
+                    PathSection(id: "6.1", sectionNumber: "6.1", title: "Energy and Metabolism", chapterId: "ch6"),
+                    PathSection(id: "6.2", sectionNumber: "6.2", title: "Potential, Kinetic, Free, and Activation Energy", chapterId: "ch6"),
+                    PathSection(id: "6.3", sectionNumber: "6.3", title: "The Laws of Thermodynamics", chapterId: "ch6"),
+                    PathSection(id: "6.4", sectionNumber: "6.4", title: "ATP: Adenosine Triphosphate", chapterId: "ch6"),
+                    PathSection(id: "6.5", sectionNumber: "6.5", title: "Enzymes", chapterId: "ch6"),
+                ]),
+                PathChapter(id: "ch7", number: 7, title: "Cellular Respiration", description: "Follow the path from glucose to ATP through glycolysis and beyond", unitId: "unit_the_cell", sections: [
+                    PathSection(id: "7.1", sectionNumber: "7.1", title: "Energy in Living Systems", chapterId: "ch7"),
+                    PathSection(id: "7.2", sectionNumber: "7.2", title: "Glycolysis", chapterId: "ch7"),
+                    PathSection(id: "7.3", sectionNumber: "7.3", title: "Oxidation of Pyruvate and the Citric Acid Cycle", chapterId: "ch7"),
+                    PathSection(id: "7.4", sectionNumber: "7.4", title: "Oxidative Phosphorylation", chapterId: "ch7"),
+                    PathSection(id: "7.5", sectionNumber: "7.5", title: "Metabolism without Oxygen", chapterId: "ch7"),
+                    PathSection(id: "7.6", sectionNumber: "7.6", title: "Connections of Carbohydrate, Protein, and Lipid Metabolic Pathways", chapterId: "ch7"),
+                    PathSection(id: "7.7", sectionNumber: "7.7", title: "Regulation of Cellular Respiration", chapterId: "ch7"),
+                ]),
+                PathChapter(id: "ch8", number: 8, title: "Photosynthesis", description: "See how plants capture light energy and convert it into organic molecules", unitId: "unit_the_cell", sections: [
+                    PathSection(id: "8.1", sectionNumber: "8.1", title: "Overview of Photosynthesis", chapterId: "ch8"),
+                    PathSection(id: "8.2", sectionNumber: "8.2", title: "The Light-Dependent Reactions of Photosynthesis", chapterId: "ch8"),
+                    PathSection(id: "8.3", sectionNumber: "8.3", title: "Using Light Energy to Make Organic Molecules", chapterId: "ch8"),
+                ]),
+            ]
+        ),
+        PathUnit(
+            id: "unit_genetics",
+            title: "Genetics",
+            chapters: [
+                PathChapter(id: "ch9", number: 9, title: "Cell Communication", description: "Uncover how cells send, receive, and respond to chemical signals", unitId: "unit_genetics", sections: [
+                    PathSection(id: "9.1", sectionNumber: "9.1", title: "Signaling Molecules and Cellular Receptors", chapterId: "ch9"),
+                    PathSection(id: "9.2", sectionNumber: "9.2", title: "Propagation of the Signal", chapterId: "ch9"),
+                    PathSection(id: "9.3", sectionNumber: "9.3", title: "Response to the Signal", chapterId: "ch9"),
+                ]),
+                PathChapter(id: "ch10", number: 10, title: "Cell Reproduction", description: "Learn how cells divide through the cell cycle and what controls it", unitId: "unit_genetics", sections: [
+                    PathSection(id: "10.1", sectionNumber: "10.1", title: "Cell Division", chapterId: "ch10"),
+                    PathSection(id: "10.2", sectionNumber: "10.2", title: "The Cell Cycle", chapterId: "ch10"),
+                    PathSection(id: "10.3", sectionNumber: "10.3", title: "Control of the Cell Cycle", chapterId: "ch10"),
+                    PathSection(id: "10.4", sectionNumber: "10.4", title: "Cancer and the Cell Cycle", chapterId: "ch10"),
+                    PathSection(id: "10.5", sectionNumber: "10.5", title: "Prokaryotic Cell Division", chapterId: "ch10"),
+                ]),
+                PathChapter(id: "ch11", number: 11, title: "Meiosis and Sexual Reproduction", description: "Explore how meiosis creates genetic diversity through sexual reproduction", unitId: "unit_genetics", sections: [
+                    PathSection(id: "11.1", sectionNumber: "11.1", title: "The Process of Meiosis", chapterId: "ch11"),
+                    PathSection(id: "11.2", sectionNumber: "11.2", title: "Sexual Reproduction", chapterId: "ch11"),
+                ]),
+                PathChapter(id: "ch12", number: 12, title: "Mendel's Experiments and Heredity", description: "Trace the laws of inheritance from Mendel's pea plants to modern genetics", unitId: "unit_genetics", sections: [
+                    PathSection(id: "12.1", sectionNumber: "12.1", title: "Mendel's Experiments", chapterId: "ch12"),
+                    PathSection(id: "12.2", sectionNumber: "12.2", title: "Characteristics and Traits", chapterId: "ch12"),
+                    PathSection(id: "12.3", sectionNumber: "12.3", title: "Laws of Inheritance", chapterId: "ch12"),
+                ]),
+                PathChapter(id: "ch13", number: 13, title: "Modern Understanding of Inheritance", description: "Connect chromosomal theory to genetic linkage and inherited disorders", unitId: "unit_genetics", sections: [
+                    PathSection(id: "13.1", sectionNumber: "13.1", title: "Chromosomal Theory and Genetic Linkage", chapterId: "ch13"),
+                    PathSection(id: "13.2", sectionNumber: "13.2", title: "Chromosomal Basis of Inherited Disorders", chapterId: "ch13"),
+                ]),
+                PathChapter(id: "ch14", number: 14, title: "DNA Structure and Function", description: "Decode the double helix and understand how DNA replicates and repairs", unitId: "unit_genetics", sections: [
+                    PathSection(id: "14.1", sectionNumber: "14.1", title: "Historical Basis of Modern Understanding", chapterId: "ch14"),
+                    PathSection(id: "14.2", sectionNumber: "14.2", title: "DNA Structure and Sequencing", chapterId: "ch14"),
+                    PathSection(id: "14.3", sectionNumber: "14.3", title: "Basics of DNA Replication", chapterId: "ch14"),
+                    PathSection(id: "14.4", sectionNumber: "14.4", title: "DNA Replication in Prokaryotes", chapterId: "ch14"),
+                    PathSection(id: "14.5", sectionNumber: "14.5", title: "DNA Replication in Eukaryotes", chapterId: "ch14"),
+                    PathSection(id: "14.6", sectionNumber: "14.6", title: "DNA Repair", chapterId: "ch14"),
+                ]),
+                PathChapter(id: "ch15", number: 15, title: "Genes and Proteins", description: "Follow the central dogma from DNA transcription to protein synthesis", unitId: "unit_genetics", sections: [
+                    PathSection(id: "15.1", sectionNumber: "15.1", title: "The Genetic Code", chapterId: "ch15"),
+                    PathSection(id: "15.2", sectionNumber: "15.2", title: "Prokaryotic Transcription", chapterId: "ch15"),
+                    PathSection(id: "15.3", sectionNumber: "15.3", title: "Eukaryotic Transcription", chapterId: "ch15"),
+                    PathSection(id: "15.4", sectionNumber: "15.4", title: "RNA Processing in Eukaryotes", chapterId: "ch15"),
+                    PathSection(id: "15.5", sectionNumber: "15.5", title: "Ribosomes and Protein Synthesis", chapterId: "ch15"),
+                ]),
+                PathChapter(id: "ch16", number: 16, title: "Gene Expression", description: "Discover how cells regulate which genes are turned on and off", unitId: "unit_genetics", sections: [
+                    PathSection(id: "16.1", sectionNumber: "16.1", title: "Regulation of Gene Expression", chapterId: "ch16"),
+                    PathSection(id: "16.2", sectionNumber: "16.2", title: "Prokaryotic Gene Regulation", chapterId: "ch16"),
+                    PathSection(id: "16.3", sectionNumber: "16.3", title: "Eukaryotic Epigenetic Gene Regulation", chapterId: "ch16"),
+                    PathSection(id: "16.4", sectionNumber: "16.4", title: "Eukaryotic Transcription Gene Regulation", chapterId: "ch16"),
+                    PathSection(id: "16.5", sectionNumber: "16.5", title: "Eukaryotic Post-transcriptional Gene Regulation", chapterId: "ch16"),
+                    PathSection(id: "16.6", sectionNumber: "16.6", title: "Eukaryotic Translational and Post-translational Gene Regulation", chapterId: "ch16"),
+                    PathSection(id: "16.7", sectionNumber: "16.7", title: "Cancer and Gene Regulation", chapterId: "ch16"),
+                ]),
+                PathChapter(id: "ch17", number: 17, title: "Biotechnology and Genomics", description: "Apply biotechnology tools to map, sequence, and analyze genomes", unitId: "unit_genetics", sections: [
+                    PathSection(id: "17.1", sectionNumber: "17.1", title: "Biotechnology", chapterId: "ch17"),
+                    PathSection(id: "17.2", sectionNumber: "17.2", title: "Mapping Genomes", chapterId: "ch17"),
+                    PathSection(id: "17.3", sectionNumber: "17.3", title: "Whole-Genome Sequencing", chapterId: "ch17"),
+                    PathSection(id: "17.4", sectionNumber: "17.4", title: "Applying Genomics", chapterId: "ch17"),
+                    PathSection(id: "17.5", sectionNumber: "17.5", title: "Genomics and Proteomics", chapterId: "ch17"),
+                ]),
+            ]
+        ),
+    ]
+
+    static let defaultCompletedSections: Set<String> = ["1.1", "1.2", "2.1"]
+    static let defaultCurrentSection: String = "2.2"
+}
