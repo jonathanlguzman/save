@@ -1,0 +1,260 @@
+import SwiftUI
+
+struct LearningPathPreviewView: View {
+    @Environment(OnboardingState.self) private var onboarding
+    let onStartLesson: () -> Void
+    let onBack: () -> Void
+
+    @State private var unitsAppeared: [Bool] = []
+    @State private var badgeBounce: Bool = false
+    @State private var shimmerOffset: CGFloat = -1
+    @State private var tooltipUnitIndex: Int?
+
+    private var subject: Subject {
+        onboarding.selectedSubject ?? .biology
+    }
+
+    private var units: [(name: String, icon: String, lessonCount: Int)] {
+        subject.units
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OnboardingNavBar(
+                currentIndex: 7,
+                accentColor: .green,
+                onBack: onBack
+            )
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    Text("Here's your path.")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(PhloeTheme.Colors.textPrimary)
+
+                    Text("Start with the first unit. Unlock more as you go.")
+                        .font(.system(size: 16))
+                        .foregroundStyle(PhloeTheme.Colors.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, PhloeTheme.Spacing.lg)
+                .padding(.horizontal, PhloeTheme.Spacing.xl)
+
+                VStack(spacing: 16) {
+                    ForEach(Array(units.enumerated()), id: \.offset) { index, unit in
+                        if index == 0 {
+                            RecommendedUnitCard(
+                                unit: unit,
+                                accentColor: subject.accentColor,
+                                appeared: index < unitsAppeared.count ? unitsAppeared[index] : false,
+                                badgeBounce: badgeBounce
+                            )
+                        } else {
+                            LockedUnitCard(
+                                unit: unit,
+                                unitNumber: index + 1,
+                                appeared: index < unitsAppeared.count ? unitsAppeared[index] : false,
+                                tooltipVisible: tooltipUnitIndex == index,
+                                firstUnitName: units[0].name
+                            ) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    tooltipUnitIndex = index
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        if tooltipUnitIndex == index {
+                                            tooltipUnitIndex = nil
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, PhloeTheme.Spacing.xl)
+                .padding(.top, PhloeTheme.Spacing.lg)
+                .padding(.bottom, 100)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack {
+                PhloeButton("START FIRST LESSON", accent: .green) {
+                    onboarding.hasSeenLearningPath = true
+                    onboarding.hasCompletedOnboardingQuestions = true
+                    onStartLesson()
+                }
+            }
+            .padding(.horizontal, PhloeTheme.Spacing.xl)
+            .padding(.vertical, PhloeTheme.Spacing.md)
+            .background(
+                Color.white
+                    .shadow(color: .black.opacity(0.06), radius: 8, y: -2)
+                    .ignoresSafeArea()
+            )
+        }
+        .background(Color.white.ignoresSafeArea())
+        .onAppear {
+            if unitsAppeared.count != units.count {
+                unitsAppeared = Array(repeating: false, count: units.count)
+            }
+            withAnimation(.easeOut(duration: 0.3)) {
+                unitsAppeared[0] = true
+            }
+            for i in 1..<units.count {
+                withAnimation(.easeOut(duration: 0.25).delay(0.2 + Double(i) * 0.1)) {
+                    unitsAppeared[i] = true
+                }
+            }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5).delay(0.5)) {
+                badgeBounce = true
+            }
+        }
+    }
+}
+
+struct RecommendedUnitCard: View {
+    let unit: (name: String, icon: String, lessonCount: Int)
+    let accentColor: Color
+    let appeared: Bool
+    let badgeBounce: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer()
+                Text("RECOMMENDED")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(0.5)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(accentColor)
+                    )
+                    .scaleEffect(badgeBounce ? 1.0 : 0)
+            }
+            .padding(.bottom, -10)
+            .zIndex(1)
+
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: unit.icon)
+                        .font(.system(size: 32))
+                        .foregroundStyle(accentColor)
+
+                    Text("UNIT 1 · \(unit.lessonCount) LESSONS")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(0.5)
+                        .foregroundStyle(accentColor)
+
+                    Text(unit.name)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(PhloeTheme.Colors.textPrimary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(accentColor.opacity(0.05))
+                )
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(accentColor, lineWidth: 2)
+            )
+            .clipShape(.rect(cornerRadius: 16))
+            .phloeCardShadow()
+        }
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 20)
+    }
+}
+
+struct LockedUnitCard: View {
+    let unit: (name: String, icon: String, lessonCount: Int)
+    let unitNumber: Int
+    let appeared: Bool
+    let tooltipVisible: Bool
+    let firstUnitName: String
+    let onTap: () -> Void
+
+    @State private var shakeOffset: CGFloat = 0
+
+    private let mutedColor = Color(hex: "7F8C8D")
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Button {
+                onTap()
+                withAnimation(.linear(duration: 0.06).repeatCount(5, autoreverses: true)) {
+                    shakeOffset = 3
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    shakeOffset = 0
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: unit.icon)
+                            .font(.system(size: 24))
+                            .foregroundStyle(mutedColor)
+
+                        Spacer()
+
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(mutedColor)
+                    }
+
+                    Text("UNIT \(unitNumber) · \(unit.lessonCount) LESSONS")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(0.5)
+                        .foregroundStyle(mutedColor)
+
+                    Text(unit.name)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(mutedColor)
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.white)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color(hex: "E8E8E8"), lineWidth: 1)
+                )
+                .clipShape(.rect(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+            .offset(x: shakeOffset)
+            .sensoryFeedback(.warning, trigger: shakeOffset) { _, newValue in
+                newValue != 0
+            }
+
+            if tooltipVisible {
+                Text("Complete \(firstUnitName) to unlock")
+                    .font(.system(size: 13))
+                    .foregroundStyle(PhloeTheme.Colors.textPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .phloeCardShadow()
+                    )
+                    .offset(y: -38)
+                    .transition(.opacity)
+            }
+        }
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 15)
+    }
+}
